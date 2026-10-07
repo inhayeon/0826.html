@@ -1,0 +1,339 @@
+# html_pinball
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>핀볼 추첨 게임</title>
+  <!-- Matter.js 물리 엔진 CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: 'Pretendard', 'Segoe UI', sans-serif;
+      background: #12121a;
+      color: #fff;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #sidebar {
+      width: 320px;
+      background: #1e1e2d;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+      z-index: 10;
+    }
+    h2 {
+      font-size: 1.2rem;
+      color: #4da6ff;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      background: #12121a;
+      color: #fff;
+      border: 1px solid #33334d;
+      padding: 12px;
+      border-radius: 8px;
+      resize: none;
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: #4da6ff;
+    }
+    button {
+      background: #4da6ff;
+      color: #12121a;
+      border: none;
+      padding: 14px;
+      font-size: 1.05rem;
+      font-weight: bold;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    button:hover {
+      background: #80c1ff;
+      transform: translateY(-1px);
+    }
+    #canvas-container {
+      flex: 1;
+      position: relative;
+      background: #0a0a0f;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* 화면 중앙 당첨 팝업 모달 */
+    #winner-modal {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+    #winner-card {
+      background: #1e1e2d;
+      border: 3px solid #ffcc00;
+      border-radius: 16px;
+      padding: 40px 60px;
+      text-align: center;
+      box-shadow: 0 0 30px rgba(255, 204, 0, 0.4);
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    #winner-card h3 {
+      color: #aaa;
+      font-size: 1.1rem;
+      margin-bottom: 10px;
+    }
+    #winner-card .name {
+      font-size: 2.5rem;
+      font-weight: bold;
+      color: #ffcc00;
+      margin-bottom: 20px;
+    }
+    #close-btn {
+      background: #ffcc00;
+      color: #12121a;
+      padding: 10px 24px;
+      border: none;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    @keyframes popIn {
+      from { transform: scale(0.7); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+
+  <div id="sidebar">
+    <h2>🎯 추첨 대상 입력</h2>
+    <p style="font-size: 0.8rem; color: #888;">쉼표(,) 또는 줄바꿈으로 참가자를 구분합니다.</p>
+    <textarea id="items-input" placeholder="김철수&#10;이영희&#10;박준형&#10;최수진&#10;한미나"></textarea>
+    <button id="start-btn">추첨 시작</button>
+  </div>
+
+  <div id="canvas-container">
+    <!-- 화면 중앙 추첨 완료 모달 -->
+    <div id="winner-modal">
+      <div id="winner-card">
+        <h3>🎉 추첨 결과</h3>
+        <div id="winner-name" class="name">-</div>
+        <button id="close-btn" onclick="closeModal()">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { Engine, Render, Runner, Bodies, Composite, Events } = Matter;
+
+    const container = document.getElementById('canvas-container');
+    const width = 600;
+    const height = 800;
+
+    const engine = Engine.create();
+    const render = Render.create({
+      element: container,
+      engine: engine,
+      options: {
+        width: width,
+        height: height,
+        wireframes: false,
+        background: '#0a0a0f'
+      }
+    });
+
+    Render.run(render);
+    const runner = Runner.create();
+    Runner.run(runner, engine);
+
+    let isPlaying = false;
+    let hasWinner = false;
+
+    // 초기 맵 구성
+    function initMap() {
+      Composite.clear(engine.world);
+      engine.world.gravity.y = 1;
+      hasWinner = false;
+
+      const wallOptions = { isStatic: true, render: { fillStyle: '#2d2d44' } };
+      
+      // 벽 및 상단 입구 가이드
+      Composite.add(engine.world, [
+        Bodies.rectangle(width / 2, -10, width, 40, wallOptions),
+        Bodies.rectangle(-10, height / 2, 40, height, wallOptions),
+        Bodies.rectangle(width + 10, height / 2, 40, height, wallOptions),
+        Bodies.rectangle(width / 2, height + 10, width, 40, wallOptions),
+        Bodies.rectangle(140, 50, 240, 10, { isStatic: true, angle: 0.35, render: { fillStyle: '#444466' } }),
+        Bodies.rectangle(width - 140, 50, 240, 10, { isStatic: true, angle: -0.35, render: { fillStyle: '#444466' } })
+      ]);
+
+      // 일반 회색 장애물 핀 배열
+      const rows = 8;
+      for (let i = 0; i < rows; i++) {
+        const count = i % 2 === 0 ? 7 : 8;
+        const spacing = width / (count + 1);
+        for (let j = 0; j < count; j++) {
+          const x = spacing * (j + 1);
+          const y = 140 + i * 60;
+          Composite.add(engine.world, Bodies.circle(x, y, 5, {
+            isStatic: true,
+            restitution: 0.8,
+            render: { fillStyle: '#666688' }
+          }));
+        }
+      }
+
+      // 🔷 파란색 위험 장애물 (닿으면 해당 핀볼 제거 후 상단 재발사)
+      const blueOptions = {
+        isStatic: true,
+        label: 'blueObstacle',
+        render: { fillStyle: '#0088ff' }
+      };
+
+      Composite.add(engine.world, [
+        Bodies.circle(180, 260, 18, blueOptions),
+        Bodies.circle(420, 260, 18, blueOptions),
+        Bodies.circle(300, 380, 22, blueOptions),
+        Bodies.circle(130, 480, 18, blueOptions),
+        Bodies.circle(470, 480, 18, blueOptions),
+        Bodies.circle(240, 580, 16, blueOptions),
+        Bodies.circle(360, 580, 16, blueOptions)
+      ]);
+
+      // 🏆 하단 골 지점 (센서 영역)
+      Composite.add(engine.world, Bodies.rectangle(width / 2, height - 30, width - 40, 40, {
+        isStatic: true,
+        isSensor: true,
+        label: 'goalZone',
+        render: { fillStyle: 'rgba(255, 204, 0, 0.25)' }
+      }));
+    }
+
+    // 대상별 핀볼 생성 함수
+    function spawnPinball(name) {
+      const colors = ['#ff4757', '#2ed573', '#ffa502', '#eccc68', '#9b59b6', '#ff78ae'];
+      const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
+      const ball = Bodies.circle(width / 2 + (Math.random() * 60 - 30), 15, 16, {
+        restitution: 0.6,
+        friction: 0.005,
+        density: 0.05,
+        label: 'pinball',
+        render: { fillStyle: randomColor }
+      });
+
+      ball.candidateName = name; // 핀볼 객체에 대상 이름 바인딩
+      Composite.add(engine.world, ball);
+    }
+
+    // 핀볼 위에 대상 이름 텍스트 렌더링
+    Events.on(render, 'afterRender', () => {
+      const context = render.context;
+      context.font = 'bold 11px Pretendard, sans-serif';
+      context.fillStyle = '#ffffff';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+
+      const bodies = Composite.allBodies(engine.world);
+      bodies.forEach(body => {
+        if (body.label === 'pinball' && body.candidateName) {
+          const { x, y } = body.position;
+          context.fillText(body.candidateName, x, y);
+        }
+      });
+    });
+
+    // 충돌 처리 (파란 장애물 제거 / 골 지점 도달)
+    Events.on(engine, 'collisionStart', (event) => {
+      event.pairs.forEach(pair => {
+        const { bodyA, bodyB } = pair;
+
+        let ball = bodyA.label === 'pinball' ? bodyA : (bodyB.label === 'pinball' ? bodyB : null);
+        let blueObstacle = bodyA.label === 'blueObstacle' ? bodyA : (bodyB.label === 'blueObstacle' ? bodyB : null);
+        let goalZone = bodyA.label === 'goalZone' ? bodyA : (bodyB.label === 'goalZone' ? bodyB : null);
+
+        // 1. 파란 장애물 충돌: 해당 핀볼 제거 후 리스폰
+        if (ball && blueObstacle) {
+          const name = ball.candidateName;
+          Composite.remove(engine.world, ball);
+          
+          if (isPlaying && !hasWinner) {
+            setTimeout(() => {
+              if (isPlaying && !hasWinner) spawnPinball(name);
+            }, 300);
+          }
+        }
+
+        // 2. 골 지점 통과: 첫 번째 도달 핀볼을 당첨자로 확정
+        if (ball && goalZone && isPlaying && !hasWinner) {
+          hasWinner = true;
+          isPlaying = false;
+          showWinnerModal(ball.candidateName);
+        }
+      });
+    });
+
+    // 당첨 모달 표시
+    function showWinnerModal(winnerName) {
+      document.getElementById('winner-name').innerText = winnerName;
+      document.getElementById('winner-modal').style.display = 'flex';
+    }
+
+    // 모달 닫기
+    function closeModal() {
+      document.getElementById('winner-modal').style.display = 'none';
+    }
+
+    // 추첨 시작 버튼 이벤트
+    document.getElementById('start-btn').addEventListener('click', () => {
+      const rawInput = document.getElementById('items-input').value;
+      const candidates = rawInput
+        .split(/[\n,]+/)
+        .map(item => item.trim())
+        .filter(item => item.length > 0);
+
+      if (candidates.length < 2) {
+        alert('최소 2개 이상의 대상을 입력해주세요!');
+        return;
+      }
+
+      closeModal();
+      initMap();
+      isPlaying = true;
+
+      // 입력한 모든 대상의 핀볼을 시차를 두고 각각 떨어뜨림
+      candidates.forEach((candidate, index) => {
+        setTimeout(() => {
+          if (isPlaying && !hasWinner) {
+            spawnPinball(candidate);
+          }
+        }, index * 150);
+      });
+    });
+
+    // 최초 맵 로드
+    initMap();
+  </script>
+</body>
+</html>
